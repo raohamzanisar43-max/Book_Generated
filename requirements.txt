@@ -1,13 +1,20 @@
-fastapi
-uvicorn
-sqlalchemy
-psycopg2-binary
-python-dotenv
-openai
-google-genai
-python-docx
-pydantic
-pydantic-settings
-requests
-pytest
-httpx
+# Web framework
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+
+# Database
+sqlalchemy>=2.0,<3.0
+psycopg2-binary>=2.9,<3.0
+
+# Configuration
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+python-dotenv>=1.0,<2.0
+
+# LLM providers
+openai>=1.40,<3.0
+google-genai>=1.0,<2.0
+
+# Output & notifications
+python-docx>=1.1,<2.0
+requests>=2.32,<3.0

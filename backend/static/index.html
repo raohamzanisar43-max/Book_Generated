@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Book Studio — Automated Book Generation</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%234338ca'/><path d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='white'/></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <strong>Book Studio</strong>
+        <small>Automated book generation · human in the loop</small>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="health" class="pill muted">Checking…</span>
+      <a class="link" href="/docs" target="_blank" rel="noopener">API docs</a>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <button id="new-book-btn" class="btn primary block">+ New book</button>
+      <h3 class="side-title">Books</h3>
+      <ul id="book-list" class="book-list"><li class="muted small">Loading…</li></ul>
+    </aside>
+
+    <main id="main" class="main">
+      <section id="empty-state" class="empty">
+        <div class="empty-card">
+          <h1>Write a book with AI — with you in charge.</h1>
+          <p>Each stage waits for your approval before the next one starts.</p>
+          <ol class="flow">
+            <li><b>Outline</b><span>Generated from your notes, revised until you approve it.</span></li>
+            <li><b>Chapters</b><span>Written one at a time, each using summaries of the chapters before it.</span></li>
+            <li><b>Final review</b><span>Give the whole manuscript a final sign-off.</span></li>
+            <li><b>Compile</b><span>Export a formatted Word document.</span></li>
+          </ol>
+          <button class="btn primary" data-action="new-book">Start a new book</button>
+        </div>
+      </section>
+
+      <section id="book-view" hidden>
+        <div class="book-head">
+          <div>
+            <h1 id="book-title"></h1>
+            <p id="book-meta" class="muted small"></p>
+          </div>
+          <button id="delete-book" class="btn ghost danger small">Delete</button>
+        </div>
+
+        <ol id="stepper" class="stepper"></ol>
+
+        <div id="next-action" class="callout"></div>
+
+        <div class="grid">
+          <div class="col-main">
+            <article class="card">
+              <header class="card-head">
+                <h2>Outline</h2>
+                <span id="outline-status" class="pill"></span>
+              </header>
+              <div id="outline-body"></div>
+            </article>
+
+            <article class="card">
+              <header class="card-head">
+                <h2>Chapters</h2>
+                <span id="chapter-progress" class="muted small"></span>
+              </header>
+              <div id="chapters-body"></div>
+            </article>
+
+            <article class="card" id="final-card">
+              <header class="card-head">
+                <h2>Final review &amp; compilation</h2>
+                <span id="final-status" class="pill"></span>
+              </header>
+              <div id="final-body"></div>
+            </article>
+          </div>
+
+          <aside class="col-side">
+            <article class="card">
+              <header class="card-head"><h2>Editor's brief</h2></header>
+              <p id="book-notes" class="prewrap small"></p>
+            </article>
+            <article class="card">
+              <header class="card-head"><h2>Activity</h2></header>
+              <ul id="activity" class="activity"></ul>
+            </article>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- New book dialog -->
+  <dialog id="new-book-dialog" class="dialog">
+    <form id="new-book-form" method="dialog">
+      <h2>New book</h2>
+      <label>Title
+        <input name="title" required maxlength="300" placeholder="e.g. The Future of AI Automation">
+      </label>
+      <label>Notes for the outline <span class="muted">(required)</span>
+        <textarea name="notes" required rows="6" placeholder="Audience, tone, topics to cover, structure, things to avoid…"></textarea>
+      </label>
+      <div class="form-row">
+        <label>Chapters
+          <input name="chapters" type="number" min="1" max="40" value="10" required>
+        </label>
+        <label>Pages per chapter
+          <input name="pages" type="number" min="1" max="40" value="20" required>
+        </label>
+      </div>
+      <p id="length-hint" class="small muted length-hint"></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn ghost" data-close>Cancel</button>
+        <button type="submit" class="btn primary">Create &amp; generate outline</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Chapter reader dialog -->
+  <dialog id="chapter-dialog" class="dialog wide">
+    <div class="dialog-head">
+      <div>
+        <p id="chapter-kicker" class="muted small"></p>
+        <h2 id="chapter-title"></h2>
+      </div>
+      <button class="btn ghost small" data-close aria-label="Close">✕</button>
+    </div>
+    <details id="chapter-summary-box" class="summary-box">
+      <summary>Summary carried forward as context</summary>
+      <p id="chapter-summary"></p>
+    </details>
+    <div id="chapter-content" class="prose reader"></div>
+    <div id="chapter-actions"></div>
+  </dialog>
+
+  <div id="busy" class="busy" hidden>
+    <div class="busy-card">
+      <div class="spinner"></div>
+      <p id="busy-text">Working…</p>
+      <small class="muted">LLM calls can take up to a minute.</small>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

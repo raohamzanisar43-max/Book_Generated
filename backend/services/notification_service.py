@@ -1,46 +1,60 @@
+"""Email (SMTP) and Microsoft Teams notifications for workflow events."""
+import logging
 import smtplib
-from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from typing import Optional
+
 import requests
-from backend.database import settings
+
+from backend.config import settings
+
+logger = logging.getLogger(__name__)
+
 
 class NotificationService:
-    def send_email(self, subject: str, body: str, to_email: str = None):
+    def send_email(self, subject: str, body: str, to_email: Optional[str] = None) -> bool:
         if not settings.SMTP_USER or not settings.SMTP_PASS:
-            print("SMTP not configured. Skipping email.")
-            return
+            logger.debug("SMTP not configured; skipping email '%s'", subject)
+            return False
 
-        to_email = to_email or settings.SMTP_USER
         msg = MIMEMultipart()
-        msg['From'] = settings.SMTP_USER
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
+        msg["From"] = settings.SMTP_USER
+        msg["To"] = to_email or settings.NOTIFY_EMAIL_TO or settings.SMTP_USER
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
 
         try:
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15) as server:
                 server.starttls()
                 server.login(settings.SMTP_USER, settings.SMTP_PASS)
                 server.send_message(msg)
-            print(f"Email sent: {subject}")
-        except Exception as e:
-            print(f"Email Error: {e}")
+            logger.info("Email sent: %s", subject)
+            return True
+        except Exception:
+            logger.exception("Failed to send email '%s'", subject)
+            return False
 
-    def send_teams_notification(self, message: str):
+    def send_teams_notification(self, title: str, message: str) -> bool:
         if not settings.TEAMS_WEBHOOK_URL:
-            print("Teams Webhook not configured. Skipping.")
-            return
+            logger.debug("Teams webhook not configured; skipping")
+            return False
 
-        payload = {"text": message}
+        payload = {"title": title, "text": message.replace("\n", "<br>")}
         try:
-            requests.post(settings.TEAMS_WEBHOOK_URL, json=payload)
-            print("Teams notification sent.")
-        except Exception as e:
-            print(f"Teams Error: {e}")
+            response = requests.post(settings.TEAMS_WEBHOOK_URL, json=payload, timeout=10)
+            response.raise_for_status()
+            logger.info("Teams notification sent: %s", title)
+            return True
+        except Exception:
+            logger.exception("Failed to send Teams notification '%s'", title)
+            return False
 
-    def notify_event(self, event_name: str, book_title: str, details: str = ""):
-        message = f"Event: {event_name}\nBook: {book_title}\n{details}"
+    def notify_event(self, event_name: str, book_title: str, details: str = "") -> None:
+        """Send an event to every configured channel. Never raises."""
+        message = f"Event: {event_name}\nBook: {book_title}\n{details}".strip()
         self.send_email(f"Book System: {event_name}", message)
-        self.send_teams_notification(message)
+        self.send_teams_notification(f"{event_name} — {book_title}", message)
+
 
 notification_service = NotificationService()

@@ -1,45 +1,52 @@
--- Books Table
-CREATE TABLE books (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    title TEXT NOT NULL,
-    notes_on_outline_before TEXT,
-    outline_status TEXT DEFAULT 'pending', -- pending, generating, review_needed, approved
-    final_review_notes_status TEXT DEFAULT 'no', -- yes, no, no_notes_needed
-    book_output_status TEXT DEFAULT 'in_progress', -- in_progress, ready, compiled
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+-- Reference schema for PostgreSQL.
+-- The application creates these tables automatically on startup (SQLAlchemy `create_all`)
+-- and via `python -m scripts.init_db`; this file documents the structure and can be run
+-- manually if you prefer to manage the schema yourself.
+
+CREATE TABLE IF NOT EXISTS books (
+    id                        VARCHAR PRIMARY KEY,               -- UUID string
+    title                     VARCHAR NOT NULL,
+    notes_on_outline_before   TEXT,                              -- required before outline generation
+    outline_status            VARCHAR DEFAULT 'pending',         -- pending | generating | review_needed | approved
+    final_review_notes_status VARCHAR DEFAULT 'no',              -- yes | no | no_notes_needed
+    book_output_status        VARCHAR DEFAULT 'in_progress',     -- in_progress | ready | compiled
+    created_at                TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'utc'),
+    updated_at                TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 
--- Outlines Table
-CREATE TABLE outlines (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    book_id UUID REFERENCES books(id) ON DELETE CASCADE,
-    content TEXT,
-    notes_on_outline_after TEXT,
-    status TEXT DEFAULT 'review_needed', -- review_needed, approved
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+-- Every revision is kept; the newest row is the current outline.
+CREATE TABLE IF NOT EXISTS outlines (
+    id                     VARCHAR PRIMARY KEY,
+    book_id                VARCHAR NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    content                TEXT,
+    notes_on_outline_after TEXT,                                 -- editor notes that produced this revision
+    status                 VARCHAR DEFAULT 'review_needed',      -- review_needed | approved
+    created_at             TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'utc')
 );
 
--- Chapters Table
-CREATE TABLE chapters (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    book_id UUID REFERENCES books(id) ON DELETE CASCADE,
-    chapter_number INTEGER NOT NULL,
-    title TEXT,
-    content TEXT,
-    summary TEXT,
-    chapter_notes_status TEXT DEFAULT 'no', -- yes, no, no_notes_needed
-    chapter_notes TEXT,
-    status TEXT DEFAULT 'pending', -- pending, generating, review_needed, approved
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(book_id, chapter_number)
+CREATE TABLE IF NOT EXISTS chapters (
+    id                   VARCHAR PRIMARY KEY,
+    book_id              VARCHAR NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    chapter_number       INTEGER NOT NULL,
+    title                VARCHAR,
+    content              TEXT,
+    summary              TEXT,                                   -- context passed to later chapters
+    chapter_notes_status VARCHAR DEFAULT 'no',                   -- yes | no | no_notes_needed
+    chapter_notes        TEXT,
+    status               VARCHAR DEFAULT 'pending',              -- pending | review_needed | approved
+    created_at           TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'utc'),
+    UNIQUE (book_id, chapter_number)
 );
 
--- Notifications Logs (Optional)
-CREATE TABLE logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    book_id UUID REFERENCES books(id),
-    message TEXT,
-    level TEXT, -- info, error, warning
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+-- Workflow activity / audit trail shown in the dashboard.
+CREATE TABLE IF NOT EXISTS logs (
+    id         VARCHAR PRIMARY KEY,
+    book_id    VARCHAR REFERENCES books(id) ON DELETE CASCADE,
+    message    TEXT,
+    level      VARCHAR,                                          -- info | warning | error
+    created_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'utc')
 );
+
+CREATE INDEX IF NOT EXISTS ix_outlines_book ON outlines (book_id, created_at);
+CREATE INDEX IF NOT EXISTS ix_chapters_book ON chapters (book_id, chapter_number);
+CREATE INDEX IF NOT EXISTS ix_logs_book     ON logs (book_id, created_at);

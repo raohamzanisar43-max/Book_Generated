@@ -1,101 +1,108 @@
-from fastapi import FastAPI, HTTPException, Depends
-from typing import List
-from uuid import UUID
-from backend.models import Book, BookCreate, FeedbackRequest, Chapter
-from backend.services.book_service import book_service
-from backend.database import SessionLocal, Book as DBBook, Outline, Chapter as DBChapter
+"""FastAPI application entry point.
 
-app = FastAPI(title="Automated Book Generation System")
+Run with:  uvicorn backend.main:app --reload
+"""
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
 
-@app.get("/")
-async def root():
-    return {"message": "Welcome to the Automated Book Generation System"}
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
-@app.post("/books/", response_model=dict)
-async def create_book(book: BookCreate):
-    return await book_service.create_book(book.title, book.notes_on_outline_before)
+from backend.api.books import router as books_router
+from backend.config import settings
+from backend.database import create_tables, engine
+from backend.services.book_service import NotFoundError, WorkflowError, book_service
+from backend.services.llm_service import LLMError, llm_service
 
-@app.get("/books/", response_model=List[dict])
-async def list_books():
-    db = SessionLocal()
+logging.basicConfig(
+    level=settings.LOG_LEVEL.upper(),
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+)
+logger = logging.getLogger("backend")
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    create_tables()  # idempotent: creates only missing tables/columns
+    if interrupted := book_service.recover_interrupted_jobs():
+        logger.warning("Marked %d interrupted chapter job(s) as failed; they can be retried", interrupted)
+    logger.info("%s v%s started (LLM provider: %s)", settings.APP_NAME, settings.APP_VERSION,
+                llm_service.active_provider())
+    yield
+
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    description=(
+        "Generate books with an LLM using a human-in-the-loop workflow: "
+        "**outline → chapters → final review → .docx compilation**. "
+        "Every stage waits for editor approval before continuing."
+    ),
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ---------------------------------------------------------- error handling
+@app.exception_handler(NotFoundError)
+async def _not_found(_: Request, exc: NotFoundError):
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(WorkflowError)
+async def _workflow_error(_: Request, exc: WorkflowError):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(LLMError)
+async def _llm_error(_: Request, exc: LLMError):
+    logger.error("LLM failure: %s", exc)
+    return JSONResponse(status_code=503, content={"detail": f"LLM service unavailable. {exc}"})
+
+
+# ------------------------------------------------------------------ routes
+app.include_router(books_router)
+
+
+@app.get("/health", tags=["System"], summary="Health check")
+def health():
     try:
-        books = db.query(DBBook).all()
-        return [{"id": b.id, "title": b.title, "outline_status": b.outline_status, "book_output_status": b.book_output_status} for b in books]
-    finally:
-        db.close()
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        database = "ok"
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Database health check failed: %s", exc)
+        database = "unavailable"
+    return {
+        "status": "ok" if database == "ok" else "degraded",
+        "version": settings.APP_VERSION,
+        "database": database,
+        "llm_provider": llm_service.active_provider(),
+    }
 
-@app.get("/books/{book_id}", response_model=dict)
-async def get_book(book_id: str):
-    db = SessionLocal()
-    try:
-        book = db.query(DBBook).filter(DBBook.id == book_id).first()
-        if not book:
-            raise HTTPException(status_code=404, detail="Book not found")
-        
-        outlines = db.query(Outline).filter(Outline.book_id == book_id).all()
-        chapters = db.query(DBChapter).filter(DBChapter.book_id == book_id).all()
-        
-        return {
-            "id": book.id,
-            "title": book.title,
-            "notes_on_outline_before": book.notes_on_outline_before,
-            "outline_status": book.outline_status,
-            "final_review_notes_status": book.final_review_notes_status,
-            "book_output_status": book.book_output_status,
-            "outlines": [{"id": o.id, "content": o.content, "status": o.status} for o in outlines],
-            "chapters": [{"id": c.id, "chapter_number": c.chapter_number, "title": c.title, "status": c.status} for c in chapters]
-        }
-    finally:
-        db.close()
 
-@app.post("/books/{book_id}/outline-feedback")
-async def outline_feedback(book_id: str, feedback: FeedbackRequest):
-    return await book_service.provide_outline_feedback(book_id, feedback.notes, feedback.status)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-@app.post("/books/{book_id}/chapters/generate")
-async def generate_chapter(book_id: str):
-    db = SessionLocal()
-    try:
-        # Check if outline is approved
-        book = db.query(DBBook).filter(DBBook.id == book_id).first()
-        if not book or book.outline_status != "approved":
-            raise HTTPException(status_code=400, detail="Outline must be approved before generating chapters.")
-        return await book_service.generate_next_chapter(book_id)
-    finally:
-        db.close()
 
-@app.post("/books/{book_id}/compile")
-async def compile_book(book_id: str):
-    return await book_service.compile_book(book_id)
+@app.get("/", include_in_schema=False)
+def dashboard():
+    return FileResponse(STATIC_DIR / "index.html")
 
-@app.post("/books/{book_id}/chapters/{chapter_number}/feedback")
-async def chapter_feedback(book_id: str, chapter_number: int, feedback: FeedbackRequest):
-    return await book_service.provide_chapter_feedback(book_id, chapter_number, feedback.notes, feedback.status)
-
-@app.get("/books/{book_id}/chapters/{chapter_number}")
-async def get_chapter(book_id: str, chapter_number: int):
-    db = SessionLocal()
-    try:
-        chapter = db.query(DBChapter).filter(DBChapter.book_id == book_id, DBChapter.chapter_number == chapter_number).first()
-        if not chapter:
-            raise HTTPException(status_code=404, detail="Chapter not found")
-        return {
-            "id": chapter.id,
-            "chapter_number": chapter.chapter_number,
-            "title": chapter.title,
-            "content": chapter.content,
-            "summary": chapter.summary,
-            "chapter_notes_status": chapter.chapter_notes_status,
-            "chapter_notes": chapter.chapter_notes,
-            "status": chapter.status
-        }
-    finally:
-        db.close()
-
-@app.post("/books/{book_id}/final-review")
-async def final_review(book_id: str, feedback: FeedbackRequest):
-    return await book_service.provide_final_review_feedback(book_id, feedback.notes, feedback.status)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000)

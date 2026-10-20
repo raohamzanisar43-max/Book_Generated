@@ -1,12 +1,24 @@
+# Secrets
 .env
+
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
+*.py[cod]
 *.so
 *.egg
 *.egg-info/
+.Python
+.venv/
+venv/
 dist/
 build/
+.pytest_cache/
+
+# App output
 exports/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
